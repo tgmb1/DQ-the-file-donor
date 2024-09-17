@@ -1,27 +1,59 @@
 import logging
 import logging.config
+from pyrogram import Client, __version__, types
+from typing import Union, Optional, AsyncGenerator
+from datetime import datetime
+import pytz
 
-# Get logging configurations
+# Configure logging
 logging.config.fileConfig('logging.conf')
 logging.getLogger().setLevel(logging.INFO)
 logging.getLogger("pyrogram").setLevel(logging.ERROR)
-logging.getLogger("imdbpy").setLevel(logging.ERROR)
 
-from pyrogram import Client, __version__
-from pyrogram.raw.all import layer
-from database.ia_filterdb import Media, Media2, choose_mediaDB, db as clientDB
-from database.users_chats_db import db
-from info import SESSION, API_ID, API_HASH, BOT_TOKEN, LOG_STR, LOG_CHANNEL, SECONDDB_URI
-from utils import temp
-from typing import Union, Optional, AsyncGenerator
-from pyrogram import types
-from Script import script 
-from datetime import date, datetime 
-import pytz
-from sample_info import tempDict
+# Configuration
+SESSION = "your_session_name"
+API_ID = "your_api_id"
+API_HASH = "your_api_hash"
+BOT_TOKEN = "your_bot_token"
+LOG_CHANNEL = "your_log_channel_id"
+
+# Link editing rules
+LINK_RULES = {
+    "hubcloud": {"prefix": "", "suffix": "club"},
+    "gdtot": {"prefix": "new6", "suffix": "dad"},
+    "gdflix": {"prefix": "new4", "suffix": "cfd"},
+    "appdrive": {"prefix": "", "suffix": "fit"},
+    "filepress": {"prefix": "new1", "suffix": "shop"}
+}
+
+# Queue sequence
+QUEUE_SEQUENCE = [
+    "gdflix", "hubcloud", "gdtot", "hubcloud", 
+    "appdrive", "hubcloud", "filepress", "hubcloud"
+]
+
+def edit_link(url: str) -> str:
+    for key, value in LINK_RULES.items():
+        if key in url:
+            base_url = url.split('/')[2]
+            new_prefix = value['prefix']
+            new_suffix = value['suffix']
+            
+            if key == "hubcloud":
+                return url.replace(base_url, f"{new_prefix}.{key}.{new_suffix}")
+            elif key == "gdtot":
+                return url.replace(base_url, f"{new_prefix}.{key}.{new_suffix}")
+            elif key == "gdflix":
+                return url.replace(base_url, f"{new_prefix}.{key}.{new_suffix}")
+            elif key == "appdrive":
+                return url.replace(base_url, f"{key}.{new_suffix}")
+            elif key == "filepress":
+                if "?usid=" in url:
+                    url = url.split("?")[0]
+                return url.replace(base_url, f"{new_prefix}.{key}.{new_suffix}")
+    return url
 
 class Bot(Client):
-
     def __init__(self):
         super().__init__(
             name=SESSION,
@@ -29,87 +61,51 @@ class Bot(Client):
             api_hash=API_HASH,
             bot_token=BOT_TOKEN,
             workers=200,
-            plugins={"root": "plugins"},
             sleep_threshold=10,
         )
 
     async def start(self):
-        b_users, b_chats = await db.get_banned()
-        temp.BANNED_USERS = b_users
-        temp.BANNED_CHATS = b_chats
         await super().start()
-        await Media.ensure_indexes()
-        await Media2.ensure_indexes()
-        #choose the right db by checking the free space
-        stats = await clientDB.command('dbStats')
-        #calculating the free db space from bytes to MB
-        free_dbSize = round(512-((stats['dataSize']/(1024*1024))+(stats['indexSize']/(1024*1024))), 2)
-        if SECONDDB_URI and free_dbSize<10: #if the primary db have less than 10MB left, use second DB.
-            tempDict["indexDB"] = SECONDDB_URI
-            logging.info(f"Since Primary DB have only {free_dbSize} MB left, Secondary DB will be used to store datas.")
-        elif SECONDDB_URI is None:
-            logging.error("Missing second DB URI !\n\nAdd SECONDDB_URI now !\n\nExiting...")
-            exit()
-        else:
-            logging.info(f"Since primary DB have enough space ({free_dbSize}MB) left, It will be used for storing datas.")
-        await choose_mediaDB()
-        me = await self.get_me()
-        temp.ME = me.id
-        temp.U_NAME = me.username
-        temp.B_NAME = me.first_name
-        self.username = '@' + me.username
-        logging.info(f"{me.first_name} with for Pyrogram v{__version__} (Layer {layer}) started on {me.username}.")
-        logging.info(LOG_STR)
-        logging.info(script.LOGO)
+        logging.info("Bot started.")
         tz = pytz.timezone('Asia/Kolkata')
-        today = date.today()
-        now = datetime.now(tz)
-        time = now.strftime("%H:%M:%S %p")
-        await self.send_message(chat_id=LOG_CHANNEL, text=script.RESTART_TXT.format(today, time))
+        now = datetime.now(tz).strftime("%H:%M:%S %p")
+        await self.send_message(chat_id=LOG_CHANNEL, text=f"Bot started at {now}")
 
     async def stop(self, *args):
         await super().stop()
-        logging.info("Bot stopped. Bye.")
+        logging.info("Bot stopped.")
 
-    async def iter_messages(
-        self,
-        chat_id: Union[int, str],
-        limit: int,
-        offset: int = 0,
-    ) -> Optional[AsyncGenerator["types.Message", None]]:
-        """Iterate through a chat sequentially.
-        This convenience method does the same as repeatedly calling :meth:`~pyrogram.Client.get_messages` in a loop, thus saving
-        you from the hassle of setting up boilerplate code. It is useful for getting the whole chat messages with a
-        single call.
-        Parameters:
-            chat_id (``int`` | ``str``):
-                Unique identifier (int) or username (str) of the target chat.
-                For your personal cloud (Saved Messages) you can simply use "me" or "self".
-                For a contact that exists in your Telegram address book you can use his phone number (str).
-                
-            limit (``int``):
-                Identifier of the last message to be returned.
-                
-            offset (``int``, *optional*):
-                Identifier of the first message to be returned.
-                Defaults to 0.
-        Returns:
-            ``Generator``: A generator yielding :obj:`~pyrogram.types.Message` objects.
-        Example:
-            .. code-block:: python
-                for message in app.iter_messages("pyrogram", 1, 15000):
-                    print(message.text)
-        """
+    async def iter_messages(self, chat_id: Union[int, str], limit: int, offset: int = 0) -> Optional[AsyncGenerator[types.Message, None]]:
         current = offset
         while True:
             new_diff = min(200, limit - current)
             if new_diff <= 0:
                 return
-            messages = await self.get_messages(chat_id, list(range(current, current+new_diff+1)))
+            messages = await self.get_messages(chat_id, list(range(current, current + new_diff + 1)))
             for message in messages:
                 yield message
                 current += 1
 
+    async def process_messages(self, chat_id: Union[int, str]):
+        queue = []
+        for message in self.iter_messages(chat_id, limit=1000):
+            if message.text:
+                edited_message = message.text
+                urls = [url for url in edited_message.split() if any(link in url for link in LINK_RULES.keys())]
+                for url in urls:
+                    edited_url = edit_link(url)
+                    edited_message = edited_message.replace(url, edited_url)
+                queue.append(edited_message)
+        
+        # Send messages in the specified queue order
+        sequence_index = 0
+        for message in queue:
+            # Find the next link type to send
+            for link_type in QUEUE_SEQUENCE:
+                if link_type in message:
+                    await self.send_message(chat_id, message)
+                    sequence_index = (sequence_index + 1) % len(QUEUE_SEQUENCE)
+                    break
 
 app = Bot()
 app.run()
